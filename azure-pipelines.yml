@@ -1,0 +1,59 @@
+# This is the "trigger". The pipeline runs automatically when you push to the 'main' branch.
+trigger:
+- main
+
+# Define which virtual machine image to use for the build agent.
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  pythonVersion: '3.11'
+  # TODO: CHANGE THIS to your actual Docker Hub username!
+  dockerHubUsername: 'my-dockerhub-username' 
+  imageName: 'k8s-logs-agent'
+  # This must match the name of the Service Connection you created in Azure DevOps
+  dockerHubServiceConnection: 'DockerHubConnection'
+
+stages:
+# --- STAGE 1: CI (Code Quality) ---
+- stage: CI
+  displayName: 'CI: Code Quality'
+  jobs:
+  - job: Test
+    displayName: 'Lint & Verify'
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '$(pythonVersion)'
+      displayName: 'Set up Python $(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install flake8
+      displayName: 'Install dependencies'
+
+    - script: |
+        # Stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+      displayName: 'Lint with flake8'
+
+# --- STAGE 2: Build & Publish (CI Artifact) ---
+- stage: BuildAndPush
+  displayName: 'CI: Build & Push Image'
+  dependsOn: CI
+  condition: succeeded()
+  jobs:
+  - job: Docker
+    displayName: 'Build & Push to Docker Hub'
+    steps:
+    - task: Docker@2
+      displayName: 'Build and Push'
+      inputs:
+        containerRegistry: '$(dockerHubServiceConnection)'
+        repository: '$(dockerHubUsername)/$(imageName)'
+        command: 'buildAndPush'
+        Dockerfile: '**/Dockerfile'
+        tags: |
+          latest
+          $(Build.BuildId)
